@@ -579,6 +579,12 @@ def init_db():
             print("Создан пользователь: admin / admin123")
 
 
+# Инициализация БД выполняется и при запуске через Gunicorn.
+init_db()
+
 if __name__ == "__main__":
-    init_db()
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(
+        host="0.0.0.0",
+        port=5000,
+        debug=os.environ.get("FLASK_DEBUG", "0") == "1"
+    )
