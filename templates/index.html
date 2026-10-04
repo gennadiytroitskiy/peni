@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Расчёт пеней ЖКУ — {{ org.name_short }}</title>
+<style>
+  :root{
+    --bg:#eef3f8; --card:#fff; --ink:#16202a; --muted:#6b7a89;
+    --line:#e3e9ef; --accent:#1f6feb; --accent2:#0b4fc4;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+  .topbar{background:#fff;border-bottom:1px solid var(--line);padding:14px 24px;display:flex;
+          align-items:center;justify-content:space-between}
+  .topbar h1{font-size:16px;margin:0}
+  .topbar .org{font-size:12px;color:var(--muted)}
+  .topbar a{color:var(--accent2);font-size:13px;text-decoration:none}
+  .wrap{max-width:1100px;margin:0 auto;padding:24px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:18px}
+  h2{font-size:14px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);margin:0 0 14px;font-weight:600}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px}
+  label{display:block;font-size:13px;font-weight:600;margin-bottom:6px}
+  input,select{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;font-size:14px;font-family:inherit}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th,td{text-align:left;padding:8px;border-bottom:1px solid var(--line)}
+  th{font-size:11px;text-transform:uppercase;color:var(--muted);font-weight:600}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+  .del{border:none;background:#fdecec;color:#c0392b;width:26px;height:26px;border-radius:7px;cursor:pointer}
+  button.btn{border:none;border-radius:8px;padding:9px 15px;font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit}
+  .btn-add{background:#eef4ff;color:var(--accent2)}
+  .btn-main{background:var(--accent);color:#fff}
+  .btn-main:hover{background:var(--accent2)}
+  .btn-ghost{background:#f2f5f8;color:var(--ink)}
+  .toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;align-items:center}
+  .summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px}
+  .stat{background:#f7fafd;border:1px solid var(--line);border-radius:10px;padding:12px}
+  .stat .k{font-size:11px;color:var(--muted);text-transform:uppercase;margin-bottom:4px}
+  .stat .v{font-size:20px;font-weight:700}
+  .stat.total .v{color:var(--accent2)}
+  .file-input{border:2px dashed var(--line);border-radius:10px;padding:20px;text-align:center;cursor:pointer}
+  .file-input:hover{border-color:var(--accent)}
+  .recent-table{font-size:13px}
+  .pill{display:inline-block;font-size:11px;padding:2px 8px;border-radius:20px;background:#eef4ff;color:var(--accent2)}
+  .export-links a{margin-right:10px;font-size:13px}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>Расчёт пеней ЖКУ <span class="org">— {{ org.name_short }}</span></h1>
+  <div>
+    <span style="font-size:13px;color:var(--muted);margin-right:12px">{{ current_user.full_name }}</span>
+    <a href="{{ url_for('logout') }}">Выйти</a>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <div class="card">
+    <h2>Массовый расчёт по нескольким лицевым счетам</h2>
+    <p style="font-size:13px;color:var(--muted)">Загрузите Excel-реестр с листами «Начисления» и «Платежи». На каждой строке укажите лицевой счёт; платежи распределяются FIFO отдельно по каждому счёту. Результат — Excel со сводкой и детализацией, расчёты сохраняются в истории.</p>
+    <form action="/batch_calculate" method="POST" enctype="multipart/form-data">
+      <div class="grid">
+        <div><label>Реестр .xlsx</label><input type="file" name="file" accept=".xlsx" required></div>
+        <div><label>Дата расчёта</label><input type="date" name="calc_date" value="{{ today_iso }}"></div>
+        <div><label>Метод ставки</label><select name="rate_mode"><option value="historical">Историческая ставка ЦБ</option><option value="fixed95">Фиксированные 9,5% (для сверки)</option></select></div>
+      </div>
+      <div class="toolbar"><button class="btn btn-main" type="submit">Рассчитать реестр и скачать Excel</button></div>
+    </form>
+    <p style="font-size:12px;color:var(--muted)"><a href="/static/template_mass.xlsx">Скачать шаблон реестра</a>. Вносите полные начисления и все платежи, а не текущий остаток вместе с платежами. На первом этапе один вид задолженности на один лицевой счёт (ЖКУ либо капремонт).</p>
+  </div>
+
+  <div class="card">
+    <h2>1. Загрузить данные</h2>
+    <div class="grid">
+      <div>
+        <label>Импорт из Excel (листы «Долги» и «Платежи»)</label>
+        <input type="file" id="excelFile" accept=".xlsx">
+      </div>
+      <div>
+        <label>Лицевой счёт / ФИО должника</label>
+        <input type="text" id="account" placeholder="Напр. ЛС-00123, Иванов И.И.">
+      </div>
+      <div>
+        <label>Дата расчёта</label>
+        <input type="date" id="calcDate">
+      </div>
+      <div>
+        <label>Метод расчёта ставки</label>
+        <select id="rateMode">
+          <option value="historical" selected>Историческая ставка ЦБ (точный)</option>
+          <option value="fixed95">Фиксированная 9,5% (упрощённый)</option>
+        </select>
+      </div>
+      <div>
+        <label>Тип задолженности</label>
+        <select id="kind">
+          <option value="jku">Плата за ЖКУ (1/300 → 1/130)</option>
+          <option value="kapremont">Взносы на капремонт (только 1/300)</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>2. Начисления</h2>
+    <table id="chargesTbl">
+      <thead><tr>
+        <th>Период (месяц)</th><th class="num">Сумма, ₽</th><th>Срок оплаты</th><th class="row-actions"></th>
+      </tr></thead>
+      <tbody id="chargesBody"></tbody>
+    </table>
+    <div class="toolbar"><button class="btn btn-add" onclick="addChargeRow()">+ Период</button></div>
+  </div>
+
+  <div class="card">
+    <h2>3. Поступившие платежи</h2>
+    <p style="font-size:12.5px;color:var(--muted);margin-top:-6px">
+      Платежи гасят задолженность по методу FIFO — сначала самый старый период.</p>
+    <table id="paymentsTbl">
+      <thead><tr><th>Дата платежа</th><th class="num">Сумма, ₽</th><th class="row-actions"></th></tr></thead>
+      <tbody id="paymentsBody"></tbody>
+    </table>
+    <div class="toolbar"><button class="btn btn-add" onclick="addPaymentRow()">+ Платёж</button></div>
+  </div>
+
+  <div class="card">
+    <div class="toolbar">
+      <button class="btn btn-main" onclick="runCalculation()">Рассчитать пени</button>
+      <button class="btn btn-ghost" onclick="window.location.reload()">Очистить</button>
+    </div>
+  </div>
+
+  <div class="card" id="resultCard" style="display:none">
+    <h2>Результат</h2>
+    <div class="summary">
+      <div class="stat"><div class="k">Основной долг</div><div class="v" id="rDebt">—</div></div>
+      <div class="stat"><div class="k">Пени</div><div class="v" id="rPeni">—</div></div>
+      <div class="stat total"><div class="k">Итого к оплате</div><div class="v" id="rAll">—</div></div>
+    </div>
+    <div class="toolbar export-links" id="exportLinks"></div>
+    <table style="margin-top:16px">
+      <thead><tr>
+        <th>Период</th><th class="num">Начислено,₽</th><th>Срок оплаты</th>
+        <th class="num">Остаток,₽</th><th class="num">Дней</th><th class="num">Пени,₽</th>
+      </tr></thead>
+      <tbody id="resultBody"></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>История расчётов</h2>
+    <table class="recent-table">
+      <thead><tr><th>№</th><th>Лицевой счёт</th><th>Дата</th><th class="num">Долг</th><th class="num">Пени</th><th class="num">Всего</th><th>Файлы</th></tr></thead>
+      <tbody>
+        {% for c in recent %}
+        <tr>
+          <td>{{ c.id }}</td>
+          <td>{{ c.account_number or '—' }}</td>
+          <td>{{ c.calc_date.strftime('%d.%m.%Y') }}</td>
+          <td class="num">{{ "%.2f"|format(c.total_debt) }}</td>
+          <td class="num">{{ "%.2f"|format(c.total_peni) }}</td>
+          <td class="num">{{ "%.2f"|format(c.total_all) }}</td>
+          <td>
+            <a href="{{ url_for('export_pdf', calc_id=c.id) }}">PDF</a>
+            <a href="{{ url_for('export_excel', calc_id=c.id) }}">Excel</a>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" style="color:var(--muted)">Пока нет расчётов</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+<script>
+document.getElementById('calcDate').value = new Date().toISOString().slice(0,10);
+
+function dueDateFor(periodStr){
+  // periodStr: YYYY-MM -> срок = 10 или 15 число следующего месяца
+  const [y,m] = periodStr.split('-').map(Number);
+  let ny=y, nm=m+1;
+  if(nm>12){nm=1;ny++;}
+  const effectiveDate = new Date(2026,2,1); // 01.03.2026, ФЗ №177-ФЗ
+  const dueMonthStart = new Date(ny, nm-1, 1);
+  const day = dueMonthStart >= effectiveDate ? 15 : 10;
+  return `${ny}-${String(nm).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+}
+
+function addChargeRow(period, amount, deadline){
+  const tb=document.getElementById('chargesBody');
+  const tr=document.createElement('tr');
+  tr.innerHTML=`
+    <td><input type="month" class="p" oninput="onPeriodChange(this)" value="${period||''}"></td>
+    <td><input type="number" class="a" step="0.01" min="0" style="text-align:right" value="${amount!=null?amount:''}"></td>
+    <td><input type="date" class="d" value="${deadline||''}"></td>
+    <td><button class="del" onclick="this.closest('tr').remove()">×</button></td>`;
+  tb.appendChild(tr);
+}
+function onPeriodChange(inp){
+  const tr=inp.closest('tr');
+  if(inp.value) tr.querySelector('.d').value = dueDateFor(inp.value);
+}
+function addPaymentRow(dateVal, amount){
+  const tb=document.getElementById('paymentsBody');
+  const tr=document.createElement('tr');
+  tr.innerHTML=`
+    <td><input type="date" class="pd" value="${dateVal||''}"></td>
+    <td><input type="number" class="pa" step="0.01" min="0" style="text-align:right" value="${amount!=null?amount:''}"></td>
+    <td><button class="del" onclick="this.closest('tr').remove()">×</button></td>`;
+  tb.appendChild(tr);
+}
+
+// импорт Excel
+document.getElementById('excelFile').addEventListener('change', async (e)=>{
+  const file = e.target.files[0];
+  if(!file) return;
+  const fd = new FormData();
+  fd.append('file', file);
+  const resp = await fetch('/import_excel', {method:'POST', body:fd});
+  const data = await resp.json();
+  if(data.error){ alert(data.error); return; }
+  document.getElementById('chargesBody').innerHTML='';
+  document.getElementById('paymentsBody').innerHTML='';
+  data.charges.forEach(c=>{
+    const [d,m,y]=c.period.split('.');
+    const [dd,mm,yy]=c.deadline.split('.');
+    addChargeRow(`${y}-${m}`, c.amount, `${yy}-${mm}-${dd}`);
+  });
+  data.payments.forEach(p=>{
+    const [d,m,y]=p.date.split('.');
+    addPaymentRow(`${y}-${m}-${d}`, p.amount);
+  });
+  alert(`Загружено: ${data.charges.length} периодов начислений, ${data.payments.length} платежей`);
+});
+
+function money(n){ return (Math.round(n*100)/100).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+
+async function runCalculation(){
+  const charges=[];
+  document.querySelectorAll('#chargesBody tr').forEach(tr=>{
+    const period = tr.querySelector('.p').value;
+    const amount = parseFloat(tr.querySelector('.a').value)||0;
+    const deadline = tr.querySelector('.d').value;
+    if(period && amount>0){
+      charges.push({period: period+'-01', amount, deadline});
+    }
+  });
+  const payments=[];
+  document.querySelectorAll('#paymentsBody tr').forEach(tr=>{
+    const d = tr.querySelector('.pd').value;
+    const a = parseFloat(tr.querySelector('.pa').value)||0;
+    if(d && a>0) payments.push({date:d, amount:a});
+  });
+
+  const payload = {
+    account: document.getElementById('account').value,
+    calc_date: document.getElementById('calcDate').value,
+    rate_mode: document.getElementById('rateMode').value,
+    kapremont: document.getElementById('kind').value === 'kapremont',
+    charges, payments
+  };
+
+  const resp = await fetch('/calculate', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+  const data = await resp.json();
+
+  document.getElementById('resultCard').style.display='block';
+  document.getElementById('rDebt').textContent = money(data.total_debt)+' ₽';
+  document.getElementById('rPeni').textContent = money(data.total_peni)+' ₽';
+  document.getElementById('rAll').textContent = money(data.total_all)+' ₽';
+  document.getElementById('exportLinks').innerHTML = `
+    <a class="btn btn-ghost" href="/export/pdf/${data.calc_id}">⬇ Скачать PDF</a>
+    <a class="btn btn-ghost" href="/export/excel/${data.calc_id}">⬇ Скачать Excel</a>`;
+
+  const body = document.getElementById('resultBody');
+  body.innerHTML='';
+  data.rows.forEach(r=>{
+    if(r.remaining<=0 && r.peni<=0) return;
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td>${r.period}</td><td class="num">${money(r.original)}</td><td>${r.deadline}</td>
+      <td class="num">${money(r.remaining)}</td><td class="num">—</td><td class="num">${money(r.peni)}</td>`;
+    body.appendChild(tr);
+  });
+
+  setTimeout(()=>window.location.reload(), 100000); // не обновляем автоматически, оставлено для истории
+}
+</script>
+</body>
+</html>

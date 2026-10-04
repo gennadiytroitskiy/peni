@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Вход — Расчёт пеней ЖКУ</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#eef3f8;
+       display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
+  .box{background:#fff;padding:36px;border-radius:14px;box-shadow:0 2px 12px rgba(16,32,48,.08);width:340px}
+  h1{font-size:18px;margin:0 0 20px;color:#16202a}
+  label{display:block;font-size:13px;font-weight:600;margin:14px 0 6px;color:#16202a}
+  input{width:100%;padding:10px 12px;border:1px solid #e3e9ef;border-radius:9px;font-size:14px;box-sizing:border-box}
+  button{width:100%;margin-top:20px;padding:11px;border:none;border-radius:9px;background:#1f6feb;
+         color:#fff;font-weight:600;font-size:14px;cursor:pointer}
+  button:hover{background:#0b4fc4}
+  .flash{background:#fdecec;color:#c0392b;padding:10px;border-radius:8px;font-size:13px;margin-bottom:10px}
+  .hint{font-size:12px;color:#6b7a89;margin-top:14px;text-align:center}
+</style>
+</head>
+<body>
+  <div class="box">
+    <h1>Вход в систему расчёта пеней</h1>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, msg in messages %}
+        <div class="flash">{{ msg }}</div>
+      {% endfor %}
+    {% endwith %}
+    <form method="POST">
+      <label>Логин</label>
+      <input type="text" name="username" required autofocus>
+      <label>Пароль</label>
+      <input type="password" name="password" required>
+      <button type="submit">Войти</button>
+    </form>
+    <div class="hint">Тестовый доступ: admin / admin123</div>
+  </div>
+</body>
+</html>
