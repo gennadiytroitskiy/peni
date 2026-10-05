@@ -64,11 +64,23 @@
       <div class="grid">
         <div><label>Реестр .xlsx</label><input type="file" name="file" accept=".xlsx" required></div>
         <div><label>Дата расчёта</label><input type="date" name="calc_date" value="{{ today_iso }}"></div>
-        <div><label>Метод ставки</label><select name="rate_mode"><option value="historical">Историческая ставка ЦБ</option><option value="fixed95">Фиксированные 9,5% (для сверки)</option></select></div>
+        <div><label>Метод ставки</label><select name="rate_mode">
+          <option value="fixed95" selected>Фиксированная 9,5 % на весь период</option>
+          <option value="historical">Историческая ставка Банка России по дням</option>
+          <option value="on_payment_date">Ставка на день фактической оплаты</option>
+        </select></div>
+        <div>
+          <label>Авансовые платежи (переплата)</label>
+          <select name="strict">
+            <option value="0" selected>Разрешить: авансы и переплата учитываются как нормальные</option>
+            <option value="1">Запретить: останавливать расчёт, если оплачено больше начисленного</option>
+          </select>
+        </div>
       </div>
       <div class="toolbar"><button class="btn btn-main" type="submit">Рассчитать реестр и скачать Excel</button></div>
     </form>
     <p style="font-size:12px;color:var(--muted)"><a href="/static/template_mass.xlsx">Скачать шаблон реестра</a>. Вносите полные начисления и все платежи, а не текущий остаток вместе с платежами. На первом этапе один вид задолженности на один лицевой счёт (ЖКУ либо капремонт).</p>
+    <p style="font-size:12px;color:var(--muted)"><b>Авансы.</b> Платёж, внесённый до срока оплаты, закрывает период заранее — пени на закрытую часть не начисляются. Если по лицевому счёту оплачено больше, чем начислено, разница показывается как переплата и не распределяется по периодам. Режим «Запретить» полезен при переносе данных, когда нужно убедиться, что в «Начислениях» указано полное начисление, а не остаток долга.</p>
   </div>
 
   <div class="card">
@@ -89,8 +101,9 @@
       <div>
         <label>Метод расчёта ставки</label>
         <select id="rateMode">
-          <option value="historical" selected>Историческая ставка ЦБ (точный)</option>
-          <option value="fixed95">Фиксированная 9,5% (упрощённый)</option>
+          <option value="fixed95" selected>Фиксированная 9,5 % на весь период</option>
+          <option value="historical">Историческая ставка Банка России по дням</option>
+          <option value="on_payment_date">Ставка на день фактической оплаты</option>
         </select>
       </div>
       <div>
@@ -140,13 +153,36 @@
       <div class="stat total"><div class="k">Итого к оплате</div><div class="v" id="rAll">—</div></div>
     </div>
     <div class="toolbar export-links" id="exportLinks"></div>
+    <p id="methodLabel" style="font-size:12.5px;color:var(--muted);margin:10px 0 0"></p>
+    <p id="advanceLabel" style="font-size:12.5px;margin:4px 0 0"></p>
+    <p id="controlLabel" style="font-size:12.5px;margin:4px 0 0"></p>
+    <div style="overflow-x:auto">
     <table style="margin-top:16px">
       <thead><tr>
-        <th>Период</th><th class="num">Начислено,₽</th><th>Срок оплаты</th>
-        <th class="num">Остаток,₽</th><th class="num">Дней</th><th class="num">Пени,₽</th>
+        <th>Период</th><th>Срок оплаты</th><th class="num">Начислено, ₽</th>
+        <th class="num">Оплачено, ₽</th><th class="num">Остаток, ₽</th>
+        <th class="num">Дней просрочки</th><th class="num">Дней с пенями</th>
+        <th class="num">Пени, ₽</th><th class="num">К оплате, ₽</th><th>Расшифровка</th>
       </tr></thead>
       <tbody id="resultBody"></tbody>
     </table>
+    </div>
+  </div>
+
+  <div class="card" id="breakdownCard" style="display:none">
+    <h2>Расшифровка: из чего сложились пени</h2>
+    <p style="font-size:12.5px;color:var(--muted);margin-top:-6px">
+      Каждый отрезок можно пересчитать вручную: база × ставка ÷ доля × дни.</p>
+    <div style="overflow-x:auto">
+    <table>
+      <thead><tr>
+        <th>Период</th><th>С</th><th>По</th><th class="num">Дней</th>
+        <th class="num">База, ₽</th><th>Доля ставки</th><th class="num">Ставка, %</th>
+        <th class="num">Пени за отрезок, ₽</th>
+      </tr></thead>
+      <tbody id="breakdownBody"></tbody>
+    </table>
+    </div>
   </div>
 
   <div class="card">
@@ -278,14 +314,59 @@ async function runCalculation(){
   const body = document.getElementById('resultBody');
   body.innerHTML='';
   data.rows.forEach(r=>{
-    if(r.remaining<=0 && r.peni<=0) return;
     const tr=document.createElement('tr');
-    tr.innerHTML=`<td>${r.period}</td><td class="num">${money(r.original)}</td><td>${r.deadline}</td>
-      <td class="num">${money(r.remaining)}</td><td class="num">—</td><td class="num">${money(r.peni)}</td>`;
+    const note = r.note ? ` <span title="${r.note}">⚠️</span>` : '';
+    tr.innerHTML=`<td>${r.period}${note}</td>
+      <td>${r.deadline}</td>
+      <td class="num">${money(r.original)}</td>
+      <td class="num">${money(r.paid_total)}</td>
+      <td class="num">${money(r.remaining)}</td>
+      <td class="num">${r.days_total}</td>
+      <td class="num">${r.days_peni}</td>
+      <td class="num">${money(r.peni)}</td>
+      <td class="num">${money(r.k_pay)}</td>
+      <td>${r.segments.length} отр.</td>`;
     body.appendChild(tr);
   });
 
-  setTimeout(()=>window.location.reload(), 100000); // не обновляем автоматически, оставлено для истории
+  // печатаем метод, авансы и контроль
+  document.getElementById('methodLabel').textContent =
+    'Метод ставки: ' + (data.rate_mode_label || '');
+
+  const adv = data.advance_total || 0;
+  const over = data.overpayment || 0;
+  const advEl = document.getElementById('advanceLabel');
+  if (adv > 0 || over > 0) {
+    const parts = [];
+    if (adv > 0) parts.push('авансом внесено ' + money(adv) + ' ₽');
+    if (over > 0) parts.push('переплата ' + money(over) + ' ₽ не распределена по периодам');
+    advEl.textContent = 'Авансы: ' + parts.join('; ');
+    advEl.style.color = over > 0 ? '#9a6400' : '#1e7b45';
+  } else {
+    advEl.textContent = '';
+  }
+  const c = data.control || {};
+  const ctrl = document.getElementById('controlLabel');
+  ctrl.textContent = c.matches ? '✓ Контроль: сумма отрезков совпадает с итогом'
+                               : '⚠️ Контроль: расхождение итога и суммы отрезков — проверьте данные';
+  ctrl.style.color = c.matches ? '#1e7b45' : '#c0392b';
+
+  // расшифровка по отрезкам
+  const bb = document.getElementById('breakdownBody');
+  bb.innerHTML='';
+  let hasSeg = false;
+  data.rows.forEach(r=>{
+    r.segments.forEach(s=>{
+      hasSeg = true;
+      const tr=document.createElement('tr');
+      tr.innerHTML=`<td>${r.period}</td><td>${s.start}</td><td>${s.end}</td>
+        <td class="num">${s.days}</td><td class="num">${money(s.base)}</td>
+        <td>1/${s.dividend}</td><td class="num">${s.rate.toFixed(2)}</td>
+        <td class="num">${money(s.peni)}</td>`;
+      bb.appendChild(tr);
+    });
+  });
+  document.getElementById('breakdownCard').style.display = hasSeg ? 'block' : 'none';
 }
 </script>
 </body>
